@@ -173,3 +173,26 @@ def test_no_steps_passes_but_is_noted():
     verdict = validate_answer("42", [])
     assert verdict["passed"] is True
     assert "note" in verdict
+
+
+def test_follow_up_number_grounded_by_prior_evidence():
+    """No tools this turn — the number is reused from an earlier turn's tools."""
+    verdict = validate_answer(
+        "The mean revenue was 1183.72.",
+        [],
+        question="what was the mean revenue again?",
+        prior_results=["mean revenue 1183.7225"],
+    )
+    assert verdict["passed"] is True
+    assert verdict["unsupported"] == []
+    assert verdict["tool_results"] == 0  # counts the current run's tools only
+
+
+def test_follow_up_unknown_number_still_flagged():
+    verdict = validate_answer(
+        "There are 9999 rows.",
+        [],
+        prior_results=["rows 20"],
+    )
+    assert verdict["passed"] is False
+    assert verdict["unsupported"] == ["9999"]

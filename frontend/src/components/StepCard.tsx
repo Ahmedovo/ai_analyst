@@ -13,9 +13,12 @@ interface Props {
   streaming?: boolean;
   /** Inline chart preview (the result screen shows charts in a gallery instead). */
   showChart?: boolean;
+  /** Trace-only mode: no raw result payload or chart preview.
+   *  The user asked for answers, not intermediate result dumps. */
+  hideResult?: boolean;
 }
 
-export function StepCard({ step, index, streaming, showChart = true }: Props) {
+export function StepCard({ step, index, streaming, showChart = true, hideResult = false }: Props) {
   const [open, setOpen] = useState(false);
   const meta = toolMeta(step.tool);
   const Icon = meta.icon;
@@ -64,7 +67,7 @@ export function StepCard({ step, index, streaming, showChart = true }: Props) {
                 : JSON.stringify(step.arguments)}
           </p>
 
-          {chart && showChart && (
+          {chart && showChart && !hideResult && (
             <a href={chartUrl(chart)} target="_blank" rel="noreferrer" className="mt-2 block">
               <img
                 src={chartUrl(chart)}
@@ -74,24 +77,28 @@ export function StepCard({ step, index, streaming, showChart = true }: Props) {
             </a>
           )}
 
-          <button
-            onClick={() => setOpen((v) => !v)}
-            className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground transition hover:text-foreground"
-          >
-            <ChevronDown className={cn("size-3 transition-transform", open && "rotate-180")} />
-            {open ? "hide result" : "show result"}
-            {!open && chart && <ImageIcon className="ml-1 size-3" />}
-            {!open && !chart && streaming && <Loader2 className="ml-1 size-3 animate-spin" />}
-          </button>
+          {!hideResult && (
+            <>
+              <button
+                onClick={() => setOpen((v) => !v)}
+                className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground transition hover:text-foreground"
+              >
+                <ChevronDown className={cn("size-3 transition-transform", open && "rotate-180")} />
+                {open ? "hide result" : "show result"}
+                {!open && chart && <ImageIcon className="ml-1 size-3" />}
+                {!open && !chart && streaming && <Loader2 className="ml-1 size-3 animate-spin" />}
+              </button>
 
-          <pre
-            className={cn(
-              "mt-1.5 overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-muted/70 p-2 font-mono text-[11px] leading-4 text-foreground/80",
-              !open && "hidden",
-            )}
-          >
-            {open ? step.result : preview}
-          </pre>
+              <pre
+                className={cn(
+                  "mt-1.5 overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-muted/70 p-2 font-mono text-[11px] leading-4 text-foreground/80",
+                  !open && "hidden",
+                )}
+              >
+                {open ? step.result : preview}
+              </pre>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

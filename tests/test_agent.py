@@ -131,6 +131,36 @@ def test_agent_answers_from_evidence_when_budget_exhausted():
     assert result.validation["passed"] is True  # 20 is grounded in the profile
 
 
+def test_agent_seeds_history_and_grounds_against_it():
+    """A follow-up replays earlier turns and may reuse their tool numbers."""
+    fake = FakeLLM([ChatResponse(text="The mean revenue was 1183.72.")])
+    agent = AnalystAgent(llm=fake)
+    result = agent.analyze(
+        DATA,
+        "what was the mean again?",
+        max_turns=4,
+        history=[
+            {
+                "question": "total revenue?",
+                "answer": "Total revenue was 23674.45.",
+                "tool_results": ["mean revenue 1183.7225"],
+            }
+        ],
+    )
+
+    sent = fake.calls[0]["messages"]
+    assert any("total revenue?" in (m.get("content") or "") for m in sent)
+    assert any(
+        m["role"] == "assistant" and "23674.45" in (m.get("content") or "")
+        for m in sent
+    )
+    assert any("Follow-up question" in (m.get("content") or "") for m in sent)
+
+    # no tools ran this turn, yet the reused number is grounded via prior evidence
+    assert result.steps == []
+    assert result.validation["passed"] is True
+
+
 def test_agent_without_llm_key_returns_placeholder():
     agent = AnalystAgent(llm=LLMService(api_key=""))  # LLMService() with no key configured
     result = agent.analyze(DATA, "q")

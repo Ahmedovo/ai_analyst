@@ -120,6 +120,44 @@ def test_analyze_end_to_end(client):
     assert body["validation"]["passed"] is True
 
 
+def test_analyze_replays_history_to_the_agent():
+    """A follow-up request replays earlier Q&A into the model conversation."""
+    fake = FakeLLM(
+        [
+            ChatResponse(
+                tool_calls=[ToolCall(id="c1", name="profile_dataset", arguments={})]
+            ),
+            ChatResponse(text="The dataset has 20 rows."),
+        ]
+    )
+    client = TestClient(create_app(agent=AnalystAgent(llm=fake)))
+    r = client.post(
+        "/api/analyze",
+        json={
+            "dataset": "sales.csv",
+            "question": "and how many rows?",
+            "history": [
+                {
+                    "question": "what was the mean revenue?",
+                    "answer": "The mean revenue was 1183.72.",
+                    "tool_results": ["mean revenue 1183.7225"],
+                }
+            ],
+        },
+    )
+    assert r.status_code == 200
+
+    first_call = fake.calls[0]["messages"]
+    assert any(
+        "what was the mean revenue?" in (m.get("content") or "") for m in first_call
+    )
+    assert any(
+        m.get("role") == "assistant" and "1183.72" in (m.get("content") or "")
+        for m in first_call
+    )
+    assert any("Follow-up question" in (m.get("content") or "") for m in first_call)
+
+
 def test_analyze_unknown_dataset_404(client):
     r = client.post("/api/analyze", json={"dataset": "ghost.csv", "question": "how much?"})
     assert r.status_code == 404
@@ -232,7 +270,7 @@ def test_analyze_stream_survives_agent_crash():
     """A mid-run crash must surface as an `error` event, not a dead socket."""
 
     class ExplodingAgent:
-        def stream(self, dataset, question, max_turns):
+        def stream(self, dataset, question, max_turns, history=None):
             raise RuntimeError("upstream exploded")
             yield  # pragma: no cover — makes this a generator function
 
@@ -251,7 +289,7 @@ def test_analyze_stream_survives_agent_crash():
 
 def test_analyze_wraps_agent_failure_as_502():
     class ExplodingAgent:
-        def analyze(self, dataset, question, max_turns):
+        def analyze(self, dataset, question, max_turns, history=None):
             raise RuntimeError("upstream exploded")
 
     client = TestClient(create_app(agent=ExplodingAgent()))

@@ -131,10 +131,15 @@ def create_app(agent: AnalystAgent | None = None) -> FastAPI:
     async def analyze(payload: AnalyzeRequest) -> AnalysisResult:
         dataset = _safe_child(DATA_DIR, payload.dataset, ".csv")
         agent: AnalystAgent = application.state.agent
+        history = [turn.model_dump() for turn in payload.history]
         # The agent is blocking (sync LLM + pandas calls) — keep the loop free.
         try:
             result = await asyncio.to_thread(
-                agent.analyze, dataset, payload.question, payload.max_turns
+                agent.analyze,
+                dataset,
+                payload.question,
+                payload.max_turns,
+                history=history,
             )
         except Exception as exc:  # noqa: BLE001 — surface LLM/tool failures cleanly
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -151,10 +156,16 @@ def create_app(agent: AnalystAgent | None = None) -> FastAPI:
         """
         dataset = _safe_child(DATA_DIR, payload.dataset, ".csv")
         agent: AnalystAgent = application.state.agent
+        history = [turn.model_dump() for turn in payload.history]
 
         def generate():
             try:
-                for event in agent.stream(dataset, payload.question, payload.max_turns):
+                for event in agent.stream(
+                    dataset,
+                    payload.question,
+                    payload.max_turns,
+                    history=history,
+                ):
                     if event["type"] == "done":
                         # echo the requested name, never a filesystem path
                         event["result"]["dataset"] = payload.dataset

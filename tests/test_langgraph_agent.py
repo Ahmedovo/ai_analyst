@@ -46,7 +46,7 @@ def test_graph_topology():
 def test_state_schema():
     hints = AnalystState.__annotations__
     for key in ("dataset", "question", "max_turns", "turns", "messages",
-                "steps", "answer", "done"):
+                "steps", "prior_evidence", "answer", "done"):
         assert key in hints
 
 

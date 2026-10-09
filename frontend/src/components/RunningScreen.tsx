@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { AlertTriangle, Sparkles, Square } from "lucide-react";
+import { AlertTriangle, Square } from "lucide-react";
 import { TraceGraph } from "@/components/TraceGraph";
 import { StepCard } from "@/components/StepCard";
 import { ValidationBadge } from "@/components/ValidationBadge";
@@ -14,7 +14,6 @@ interface Props {
   dataset: string;
   activeNode: GraphNode | null;
   counts: Record<GraphNode, number>;
-  plans: string[];
   steps: ToolStep[];
   validation: Validation | null;
   retries: number;
@@ -23,15 +22,14 @@ interface Props {
 }
 
 /**
- * Stage 2 — the live agent trace: animated graph, streaming plans,
- * tool-call timeline and the grounding check, with a Stop button.
+ * Stage 2 — the live agent trace: animated graph, tool-call timeline and
+ * the grounding check, with a Stop button.
  */
 export function RunningScreen({
   question,
   dataset,
   activeNode,
   counts,
-  plans,
   steps,
   validation,
   retries,
@@ -73,24 +71,7 @@ export function RunningScreen({
             </span>
           </div>
 
-          {/* plans stream in while the agent reasons */}
-          {plans.length > 0 && (
-            <div className="space-y-1.5 rounded-lg border bg-card/60 p-3">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Plan
-              </div>
-              {plans.map((p, j) => (
-                <p
-                  key={j}
-                  className="animate-in-up flex items-start gap-1.5 text-xs italic text-muted-foreground"
-                >
-                  <Sparkles className="mt-0.5 size-3 shrink-0 text-primary/70" />
-                  {p}
-                </p>
-              ))}
-            </div>
-          )}
-
+          {/* retry notice — the validator bounced the answer back */}
           {retries > 0 && (
             <div className="flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
               <AlertTriangle className="size-3.5" />
@@ -119,6 +100,7 @@ export function RunningScreen({
                     step={step}
                     index={i}
                     streaming={i === steps.length - 1}
+                    hideResult
                   />
                 ))}
               </div>
@@ -131,17 +113,6 @@ export function RunningScreen({
               Grounding check
             </div>
             <ValidationBadge validation={validation} retries={retries} streaming />
-            {validation && !validation.note && validation.passed !== undefined && (
-              <p className="mt-2 font-mono text-[10px] text-muted-foreground">
-                {validation.checked ?? 0} number
-                {(validation.checked ?? 0) === 1 ? "" : "s"} in answer vs{" "}
-                {validation.tool_results ?? 0} tool result
-                {(validation.tool_results ?? 0) === 1 ? "" : "s"}
-                {(validation.unsupported?.length ?? 0) > 0 && (
-                  <> · unsupported: {validation.unsupported?.join(", ")}</>
-                )}
-              </p>
-            )}
           </div>
 
           <div ref={endRef} />

@@ -1,8 +1,9 @@
 """Grounding check: every number in a final answer must come from a tool result.
 
 Deterministic (no LLM): extracts numeric tokens from the answer and verifies
-each one is grounded in the concatenated tool results of the run (or was part
-of the user's original question).
+each one is grounded in the concatenated tool results of the run — plus, for
+follow-up questions, the tool results of earlier turns — or was part of the
+user's own question.
 
 A token is grounded when a tool-result number either matches it directly
 (full / 2- / 4-decimal precision) or **rounds to exactly what the answer
@@ -102,6 +103,7 @@ def validate_answer(
     answer: str,
     steps: list[dict[str, Any]],
     question: str = "",
+    prior_results: list[str] | None = None,
 ) -> dict[str, Any]:
     """Check that every number in ``answer`` is grounded in a tool result.
 
@@ -111,8 +113,14 @@ def validate_answer(
 
     Numbers that were part of the user's own question (e.g. a year they
     mentioned) are accepted without grounding.
+
+    ``prior_results`` are tool-result texts from earlier turns of the same
+    conversation: a follow-up answer may legitimately reuse those numbers, so
+    they join the corpus. ``tool_results`` in the verdict still counts only the
+    current run's steps.
     """
-    if not steps:
+    prior_results = prior_results or []
+    if not steps and not prior_results:
         return {
             "passed": True,
             "checked": 0,
@@ -124,8 +132,7 @@ def validate_answer(
     corpus_r4: set[float] = set()
     corpus_r2: set[float] = set()
     corpus_values: list[float] = []
-    for step in steps:
-        result = step.get("result", "")
+    for result in [step.get("result", "") for step in steps] + list(prior_results):
         r4, r2 = _collect(result)
         corpus_r4 |= r4
         corpus_r2 |= r2

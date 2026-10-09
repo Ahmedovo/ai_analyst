@@ -117,7 +117,7 @@ sequenceDiagram
     participant AG as AnalystAgent<br/>(LangGraph graph)
     participant LLM as LLM provider
 
-    C->>API: POST /api/analyze {dataset, question, max_turns}
+    C->>API: POST /api/analyze {dataset, question, max_turns, history?}
     API->>API: validate payload (422)<br/>resolve dataset inside data/ (400/404)
     API->>AG: asyncio.to_thread(analyze, ...)  ← keeps the event loop free
     AG->>LLM: agent ⇄ tools ⇄ validate turns
@@ -143,6 +143,11 @@ sequenceDiagram
 curl -X POST http://127.0.0.1:8000/api/analyze `
   -H "Content-Type: application/json" `
   -d '{"dataset":"sales.csv","question":"Which region had the highest revenue?","max_turns":8}'
+
+# follow-up — replay earlier turns so the agent has context
+curl -X POST http://127.0.0.1:8000/api/analyze `
+  -H "Content-Type: application/json" `
+  -d '{"dataset":"sales.csv","question":"And by product?","history":[{"question":"Which region had the highest revenue?","answer":"North (5737.20)","tool_results":["revenue 5737.20"]}]}'
 
 # upload a dataset
 curl -X POST http://127.0.0.1:8000/api/datasets -F "file=@my_data.csv"
@@ -310,6 +315,20 @@ All three collapse into one `ChatResponse(text, tool_calls[ToolCall(id, name, ar
 and history is rebuilt in the right wire format each turn (Anthropic tool
 results become `tool_result` blocks, Gemini's become `functionResponse`, ...).
 
+### Failure resilience
+
+- **Transient LLM failures are retried** (429 / 5xx / timeouts) with a small
+  backoff (`LLMService.chat`, `config.max_retries = 2`), so a momentary
+  provider hiccup does not kill a run. 4xx auth errors are never retried.
+  Provider errors surface as short single-line messages, never raw JSON dumps.
+- **A run can never end without an answer.** If the model is unreachable
+  mid-run (outage, exhausted free-tier quota), the agent converts the tool
+  results gathered so far into a deterministic **evidence digest** and ships
+  it as the final answer (marked "Analysis interrupted" with the reason),
+  instead of failing the stream with an `error` event. The digest is shown
+  as-is — it is not grounding-scored, because re-entering the loop would
+  just fail again on the same outage.
+
 ### Two layers of validation
 
 | Layer | Where | What it checks |
@@ -380,7 +399,7 @@ ai-data-analyst/
 │   │   │   ├── ui/              # shadcn-style primitives (button, card, badge, ...)
 │   │   │   ├── IntakeScreen.tsx # stage 1: chat composer + dataset upload
 │   │   │   ├── RunningScreen.tsx# stage 2: animated live agent trace
-│   │   │   ├── ResultScreen.tsx # stage 3: answer + charts + tool audit
+│   │   │   ├── ResultScreen.tsx # stage 3: answer + charts + follow-up composer
 │   │   │   ├── TraceGraph.tsx   # live agent ⇄ tools ⇄ validate visualiser
 │   │   │   ├── StepCard.tsx     # timeline card per tool call
 │   │   │   ├── ValidationBadge.tsx  # grounding verdict shield
@@ -415,6 +434,7 @@ Check types for `validate_data`: `not_null`, `unique`, `numeric`, `range`,
 ## Guarantees
 
 - **No invented numbers** — deterministic grounding gate on every final answer
+- **Follow-ups keep context** — `history: [{question, answer, tool_results}]` replays earlier turns to the model, and their tool results join the grounding corpus so reused numbers stay valid
 - **No silent tool failures** — exceptions come back as `ERROR: ...` so the model retries with corrected arguments
 - **No runaway loops** — `max_turns` on model calls, `MAX_ANSWER_RETRIES = 1` on validation, `recursion_limit` derived from both
 - **Full audit trail** — `result.steps` records tool, arguments, status, and full result for every call
@@ -422,7 +442,7 @@ Check types for `validate_data`: `not_null`, `unique`, `numeric`, `range`,
 ## Tests
 
 ```powershell
-pytest          # 62 tests, offline (fake LLM + injected fake agent, no API key)
+pytest          # 81 tests, offline (fake LLM + injected fake agent, no API key)
 ```
 
 ## Extending

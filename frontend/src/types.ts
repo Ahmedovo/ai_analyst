@@ -53,7 +53,6 @@ export type ChatMessage =
       role: "assistant";
       content: string;
       validation?: Validation;
-      plans?: string[];
       steps?: ToolStep[];
       charts?: string[];
       retries?: number;
@@ -65,4 +64,13 @@ export interface AnalyzePayload {
   dataset: string;
   question: string;
   max_turns: number;
+  history?: HistoryTurn[];
+}
+
+/** One earlier exchange, replayed so follow-up questions have context. */
+export interface HistoryTurn {
+  question: string;
+  answer: string;
+  /** Tool-result texts from that turn, so reused numbers stay grounded. */
+  tool_results?: string[];
 }

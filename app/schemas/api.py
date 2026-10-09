@@ -5,6 +5,20 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class HistoryTurn(BaseModel):
+    """One earlier exchange, replayed so follow-up questions have context."""
+
+    question: str = Field(..., min_length=1, description="The earlier question")
+    answer: str = Field(default="", description="The earlier (final) answer")
+    tool_results: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Tool-result texts from that turn. Reused numbers in a follow-up "
+            "answer stay grounded against this earlier evidence."
+        ),
+    )
+
+
 class AnalyzeRequest(BaseModel):
     dataset: str = Field(
         ..., min_length=1, description="CSV file name inside data/", examples=["sales.csv"]
@@ -17,6 +31,15 @@ class AnalyzeRequest(BaseModel):
     )
     max_turns: int = Field(
         default=8, ge=1, le=20, description="Max model turns before forced stop"
+    )
+    history: list[HistoryTurn] = Field(
+        default_factory=list,
+        max_length=20,
+        description=(
+            "Earlier Q&A turns (oldest first). When present the agent runs as a "
+            "follow-up: prior exchanges are replayed to the model and their tool "
+            "results join the grounding check."
+        ),
     )
 
 

@@ -4,12 +4,9 @@ import {
   ArrowRight,
   BarChart3,
   BrainCircuit,
-  ChevronDown,
   ExternalLink,
   Plus,
-  Wrench,
 } from "lucide-react";
-import { StepCard } from "@/components/StepCard";
 import { ValidationBadge } from "@/components/ValidationBadge";
 import { Markdown } from "@/components/Markdown";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { chartUrl } from "@/api/client";
 import { chartNameFromResult } from "@/lib/tools";
-import type { AnalysisResult, ChatMessage } from "@/types";
+import type { ChatMessage } from "@/types";
 
 interface Props {
   messages: ChatMessage[];
@@ -27,7 +24,6 @@ interface Props {
   onInputChange: (value: string) => void;
   onSend: () => void;
   onNewChat: () => void;
-  latest: AnalysisResult | null;
   endRef: RefObject<HTMLDivElement | null>;
 }
 
@@ -48,9 +44,9 @@ function chartsOf(msg: AssistantMessage): string[] {
 }
 
 /**
- * Stage 3 — everything the agent returned: markdown answer, grounding
- * verdict, chart gallery, full tool-call audit, raw JSON. A follow-up
- * composer at the bottom feeds the next run.
+ * Stage 3 — just the answer: the markdown answer with its grounding verdict
+ * and any charts it produced, plus a follow-up composer. Agent reasoning,
+ * the tool audit, and raw JSON are intentionally not shown.
  */
 export function ResultScreen({
   messages,
@@ -59,9 +55,10 @@ export function ResultScreen({
   onInputChange,
   onSend,
   onNewChat,
-  latest,
   endRef,
 }: Props) {
+  const exchangeCount = messages.filter((m) => m.role === "assistant").length;
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -96,8 +93,6 @@ export function ResultScreen({
           }
 
           const charts = chartsOf(msg);
-          const steps = msg.steps ?? [];
-          const unsupported = msg.validation?.unsupported ?? [];
 
           return (
             <div key={i} className="animate-in-up space-y-3">
@@ -115,32 +110,8 @@ export function ResultScreen({
                     retries={msg.retries ?? 0}
                   />
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  {msg.plans && msg.plans.length > 0 && (
-                    <div className="space-y-1 rounded-lg bg-muted/60 px-3 py-2">
-                      {msg.plans.map((p, j) => (
-                        <p
-                          key={j}
-                          className="text-xs italic text-muted-foreground"
-                        >
-                          {p}
-                        </p>
-                      ))}
-                    </div>
-                  )}
+                <CardContent>
                   <Markdown content={msg.content} />
-                  {msg.validation &&
-                    !msg.validation.note &&
-                    msg.validation.passed !== undefined && (
-                      <p className="font-mono text-[10px] text-muted-foreground">
-                        {msg.validation.checked ?? 0} number
-                        {(msg.validation.checked ?? 0) === 1 ? "" : "s"} in answer
-                        vs {msg.validation.tool_results ?? 0} tool results
-                        {unsupported.length > 0 && (
-                          <> · unsupported: {unsupported.join(", ")}</>
-                        )}
-                      </p>
-                    )}
                 </CardContent>
               </Card>
 
@@ -176,40 +147,6 @@ export function ResultScreen({
                   </div>
                 </div>
               )}
-
-              {/* ---------- tool-call audit ---------- */}
-              {steps.length > 0 && (
-                <details className="group rounded-xl border bg-card shadow-sm">
-                  <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-medium">
-                    <span className="flex items-center gap-2">
-                      <Wrench className="size-4 text-muted-foreground" />
-                      Tool calls
-                      <Badge variant="muted">{steps.length}</Badge>
-                    </span>
-                    <ChevronDown className="size-4 text-muted-foreground transition group-open:rotate-180" />
-                  </summary>
-                  <div className="space-y-2 border-t p-3">
-                    {steps.map((step, j) => (
-                      <StepCard key={j} step={step} index={j} showChart={false} />
-                    ))}
-                  </div>
-                </details>
-              )}
-
-              {/* ---------- raw result JSON (latest exchange only) ---------- */}
-              {latest && i === messages.length - 1 && (
-                <details className="group rounded-xl border bg-card shadow-sm">
-                  <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-medium">
-                    <span className="flex items-center gap-2">
-                      <ChevronDown className="size-4 text-muted-foreground transition group-open:rotate-180" />
-                      Raw result JSON
-                    </span>
-                  </summary>
-                  <pre className="overflow-x-auto rounded-b-xl border-t bg-muted/70 p-3 font-mono text-[11px] leading-4 text-foreground/80">
-                    {JSON.stringify(latest, null, 2)}
-                  </pre>
-                </details>
-              )}
             </div>
           );
         })}
@@ -241,6 +178,11 @@ export function ResultScreen({
             <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
               <Badge variant="muted">{dataset || "no dataset"}</Badge>
               <span>every number is checked against tool output</span>
+              {exchangeCount > 1 && (
+                <Badge variant="outline" className="border-primary/30 text-primary">
+                  follow-up context · {exchangeCount} exchanges
+                </Badge>
+              )}
               <Button
                 variant="ghost"
                 size="sm"

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -34,6 +35,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DEFAULT_TIMEOUT = 60.0
+
+#: HTTP statuses worth retrying — transient provider hiccups (429 per-minute
+#: rate limits, gateway errors). 4xx auth/validation errors are permanent.
+TRANSIENT_STATUSES = {429, 500, 502, 503, 504}
 
 #: Neutral tool definition: ``{name, description, parameters}`` (JSON Schema).
 ToolDefinition = dict[str, Any]
@@ -50,6 +55,7 @@ class LLMConfig:
     temperature: float = 0.2
     max_tokens: int = 2048
     timeout: float = DEFAULT_TIMEOUT
+    max_retries: int = 2
 
     @classmethod
     def from_env(cls, **overrides: Any) -> "LLMConfig":
@@ -354,6 +360,28 @@ def _build_request(
     )
 
 
+def _retry_after(headers: httpx.Headers | dict[str, str]) -> float | None:
+    """Numeric ``Retry-After`` seconds, when the provider sends one."""
+    raw = (headers or {}).get("retry-after")
+    if raw and raw.strip().isdigit():
+        return float(raw.strip())
+    return None
+
+
+def _clean_error(status: int, body: str) -> str:
+    """Short, single-line provider error (never dump raw response JSON)."""
+    body = (body or "").strip()
+    try:
+        data = json.loads(body)
+        msg = (data.get("error") or {}).get("message") or data.get("message") or body
+    except Exception:  # noqa: BLE001 — body may not be JSON at all
+        msg = body
+    msg = " ".join(str(msg).split())
+    if len(msg) > 300:
+        msg = msg[:300] + "…"
+    return f"LLM request failed ({status}): {msg}"
+
+
 # ---------------------------------------------------------------------------
 # Response parsing
 # ---------------------------------------------------------------------------
@@ -471,7 +499,11 @@ class LLMService:
         messages: list[dict[str, Any]],
         tools: list[ToolDefinition] | None = None,
     ) -> ChatResponse:
-        """Send a conversation (optionally with tools) and get one model turn."""
+        """Send a conversation (optionally with tools) and get one model turn.
+
+        Transient failures (429/5xx/timeouts) are retried with a small backoff
+        so a momentary provider hiccup does not kill the whole agent run.
+        """
         cfg = self.config
         if not cfg.api_key:
             return ChatResponse(
@@ -479,13 +511,34 @@ class LLMService:
             )
 
         url, headers, payload = _build_request(cfg, messages, tools)
-        response = httpx.post(url, json=payload, headers=headers, timeout=cfg.timeout)
-        if response.status_code >= 400:
-            raise RuntimeError(
-                f"LLM request failed ({response.status_code}): {response.text[:500]}"
-            )
-        data = response.json()
-        return ChatResponse(
-            text=_parse_response(cfg.provider, data),
-            tool_calls=_parse_tool_calls(cfg.provider, data),
-        )
+        last_message = "LLM request failed"
+        last_exc: Exception | None = None
+        for attempt in range(cfg.max_retries + 1):
+            response = None
+            try:
+                response = httpx.post(
+                    url, json=payload, headers=headers, timeout=cfg.timeout
+                )
+            except httpx.TimeoutException as exc:
+                last_message = _clean_error(0, f"request timed out after {cfg.timeout}s")
+                last_exc = exc
+            else:
+                if response.status_code < 400:
+                    data = response.json()
+                    return ChatResponse(
+                        text=_parse_response(cfg.provider, data),
+                        tool_calls=_parse_tool_calls(cfg.provider, data),
+                    )
+                last_message = _clean_error(response.status_code, response.text)
+                if response.status_code not in TRANSIENT_STATUSES:
+                    raise RuntimeError(last_message)
+
+            # Transient failure (429/5xx) or timeout — back off, then retry.
+            if attempt >= cfg.max_retries:
+                break
+            wait = _retry_after(response.headers) if response is not None else None
+            if wait is None:
+                wait = 2.0 * (attempt + 1)
+            time.sleep(min(wait, 10.0))
+
+        raise RuntimeError(last_message) from last_exc

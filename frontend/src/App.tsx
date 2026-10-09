@@ -10,11 +10,11 @@ import {
   uploadDataset,
 } from "@/api/client";
 import type {
-  AnalysisResult,
   ChatMessage,
   DatasetInfo,
   GraphNode,
   HealthInfo,
+  HistoryTurn,
   ToolStep,
   Validation,
 } from "@/types";
@@ -22,16 +22,44 @@ import type {
 /**
  * Three-stage flow:
  *   intake   — chat composer + dataset upload/select (first page)
- *   running  — animated live agent trace (graph, plans, tool timeline)
- *   result   — every AI return: answer, validation, charts, tool audit,
- *              raw JSON, plus a follow-up composer
+ *   running  — animated live agent trace (graph, tool timeline)
+ *   result   — just the answer, its charts, and the follow-up composer
  */
 type Stage = "intake" | "running" | "result";
 
 const EMPTY_COUNTS: Record<GraphNode, number> = { agent: 0, tools: 0, validate: 0 };
 
+//: cap the history carried into a follow-up request (payload size + latency)
+const MAX_HISTORY_TURNS = 10;
+const MAX_EVIDENCE_CHARS = 4000;
+//: prior answers replay into the LLM context, so keep only the conclusion
+//: (answers state the conclusion first; the full tables cost real tokens)
+const MAX_PRIOR_ANSWER_CHARS = 800;
+
 function pathBase(p: string): string {
   return p.trim().split(/[\\/]/).pop() ?? "";
+}
+
+/** Collapse the message thread into replayable turns (oldest first, capped). */
+function buildHistory(messages: ChatMessage[]): HistoryTurn[] {
+  const turns: HistoryTurn[] = [];
+  let pending: string | null = null;
+  for (const msg of messages) {
+    if (msg.role === "user") {
+      pending = msg.content;
+    } else if (msg.role === "assistant" && pending !== null) {
+      const answer = msg.content.slice(0, MAX_PRIOR_ANSWER_CHARS);
+      turns.push({
+        question: pending,
+        answer,
+        tool_results: (msg.steps ?? []).map((s) =>
+          s.result.slice(0, MAX_EVIDENCE_CHARS),
+        ),
+      });
+      pending = null;
+    }
+  }
+  return turns.slice(-MAX_HISTORY_TURNS);
 }
 
 export default function App() {
@@ -53,18 +81,14 @@ export default function App() {
   const [question, setQuestion] = useState("");
   const [activeNode, setActiveNode] = useState<GraphNode | null>(null);
   const [counts, setCounts] = useState(EMPTY_COUNTS);
-  const [plans, setPlans] = useState<string[]>([]);
   const [steps, setSteps] = useState<ToolStep[]>([]);
   const [validation, setValidation] = useState<Validation | null>(null);
   const [retries, setRetries] = useState(0);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
-  // latest plans/retries for use inside the streaming loop (stale closures)
-  const plansRef = useRef<string[]>([]);
-  plansRef.current = plans;
+  // latest retries for use inside the streaming loop (stale closures)
   const retriesRef = useRef(0);
   retriesRef.current = retries;
 
@@ -99,7 +123,7 @@ export default function App() {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, steps.length, plans.length, stage]);
+  }, [messages.length, steps.length, stage]);
 
   // ---- actions ------------------------------------------------------------
   async function handleUpload(file: File) {
@@ -123,7 +147,6 @@ export default function App() {
   function newChat() {
     abortRef.current?.abort();
     setMessages([]);
-    setResult(null);
     setInput("");
     setIntakeError(null);
     setStage("intake");
@@ -140,32 +163,31 @@ export default function App() {
     setIntakeError(null);
     setInput("");
     setQuestion(q);
+
+    // Capture context BEFORE the new user turn is appended — messages may
+    // already include prior Q&A from earlier runs in this conversation.
+    const history = buildHistory(messages);
+
     setMessages((m) => [...m, { role: "user", content: q }]);
     setStage("running");
     setActiveNode(null);
     setCounts(EMPTY_COUNTS);
-    setPlans([]);
     setSteps([]);
     setValidation(null);
     setRetries(0);
-    setResult(null);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
       for await (const event of streamAnalyze(
-        { dataset, question: q, max_turns: maxTurns },
+        { dataset, question: q, max_turns: maxTurns, history },
         controller.signal,
       )) {
         switch (event.type) {
           case "node": {
             setActiveNode(event.node);
             setCounts((c) => ({ ...c, [event.node]: c[event.node] + 1 }));
-            break;
-          }
-          case "plan": {
-            setPlans((p) => [...p, event.text]);
             break;
           }
           case "step": {
@@ -191,7 +213,6 @@ export default function App() {
             const charts = (event.result.chart_paths ?? [])
               .map(pathBase)
               .filter((n) => n.toLowerCase().endsWith(".png"));
-            setResult(event.result);
             setValidation(event.result.validation);
             setActiveNode(null);
             setMessages((m) => [
@@ -200,7 +221,6 @@ export default function App() {
                 role: "assistant",
                 content: event.result.answer || "(no answer produced)",
                 validation: event.result.validation,
-                plans: plansRef.current,
                 steps: event.result.steps,
                 charts,
                 retries: retriesRef.current,
@@ -268,7 +288,6 @@ export default function App() {
             dataset={dataset}
             activeNode={activeNode}
             counts={counts}
-            plans={plans}
             steps={steps}
             validation={validation}
             retries={retries}
@@ -285,7 +304,6 @@ export default function App() {
             onInputChange={setInput}
             onSend={() => void runQuestion(input)}
             onNewChat={newChat}
-            latest={result}
             endRef={endRef}
           />
         )}

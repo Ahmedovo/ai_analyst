@@ -58,23 +58,26 @@ The UI is a three-stage flow (`intake → running → result`):
   - Indeterminate progress bar, bouncing status dots, and the agent's *plan*
     text streaming in line by line.
   - **Tool timeline** — each executed tool appears as a staggered-entrance
-    card (muted categorical icon per tool, mono args, expandable raw result);
-    the newest card pulses while it runs; `create_chart` steps show the PNG.
+    card (muted categorical icon per tool, mono args, status badge only — no
+    raw result payloads or inline chart previews; the user asked for answers,
+    not intermediate dumps); the newest card pulses while it runs.
   - **Validation shield** — `all N numbers grounded` (green), the unsupported
     list (red), or a retry notice when the validator bounced the answer back.
   - **Stop run** aborts the fetch (AbortController) and returns to the result
     screen with the partial trace preserved.
-- **Stage 3 — Result** (everything the AI returned)
+- **Stage 3 — Result** (just the answers)
   - Full markdown answer in an Analyst card with the grounding verdict badge.
+    Agent reasoning, the tool audit, and raw JSON are intentionally not shown —
+    only the answer itself, so the page stays lean (and follow-up context
+    replays a truncated answer, keeping LLM token use low).
   - **Charts gallery** — every `create_chart` PNG (union of `chart_paths` and
     step results) displayed as large cards in a 2-column grid; click to open
     the full-size chart in a new tab.
-  - **Tool-call audit** — collapsible list of every tool call with its
-    arguments and raw result.
-  - **Raw result JSON** — the full `AnalysisResult`, collapsible.
   - Follow-up composer at the bottom (Enter to send) runs the next question
-    against the same dataset; **New chat** clears the conversation and returns
-    to the intake screen.
+    against the same dataset, **replaying the conversation** (`history` of
+    `{question, answer, tool_results}`) so the agent remembers earlier turns —
+    a "follow-up context · N exchanges" badge shows memory is active;
+    **New chat** clears the conversation and returns to the intake screen.
 
 **Colors** — professional slate neutrals with a single blue-600 accent
 (light mode default); dark mode uses the same layout in slate-950 with a
@@ -93,6 +96,12 @@ line). Event types:
 {"type": "retry",      "unsupported": ["42"]}
 {"type": "done",       "result": { /* full AnalysisResult */ }}
 ```
+
+If the agent crashes mid-run (provider outage, rate limit), the `error` event
+is **not** emitted — instead the run ends with a `done` event whose answer is
+an evidence digest of the tool results gathered so far, so the UI always has
+an answer to show. `{"type": "error", ...}` is reserved for catastrophic
+failures inside the API layer itself.
 
 The client (`src/api/client.ts`) decodes the response body with
 `TextDecoder` and yields parsed events — no EventSource needed, works with
