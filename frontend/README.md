@@ -25,8 +25,8 @@ lock-in — exactly how shadcn is meant to be used.
 ## Run it
 
 ```bash
-# 1. start the backend (from the project root)
-.venv\Scripts\python.exe -m uvicorn app.api.main:app --port 8000
+# 1. start the backend (from the project root; backend lives in .venv/)
+.venv\Scripts\python.exe -m uvicorn app.api.main:app --port 8000 --app-dir .venv
 
 # 2. start the frontend (from frontend/)
 npm install

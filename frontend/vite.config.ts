@@ -11,7 +11,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // dev proxy → FastAPI backend (start it first: uvicorn app.api.main:app)
+      // dev proxy → FastAPI backend (start it first: see frontend/README.md)
       "/api": { target: "http://127.0.0.1:8000", changeOrigin: true },
     },
   },

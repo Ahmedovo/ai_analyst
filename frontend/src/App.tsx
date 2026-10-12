@@ -246,7 +246,7 @@ export default function App() {
           ...m,
           {
             role: "error",
-            content: `Request failed: ${error.message}. Is the API running? (uvicorn app.api.main:app)`,
+            content: `Request failed: ${error.message}. Is the API running? (.venv\\Scripts\\python.exe -m uvicorn app.api.main:app --port 8000 --app-dir .venv)`,
           },
         ]);
       }

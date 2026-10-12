@@ -27,12 +27,15 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import httpx
 from dotenv import load_dotenv
 
-load_dotenv()
+# The backend lives inside .venv/ in this project layout, so load .env from
+# next to the package rather than from the current working directory.
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 DEFAULT_TIMEOUT = 60.0
 

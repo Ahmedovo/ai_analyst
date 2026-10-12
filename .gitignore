@@ -1,5 +1,13 @@
 # Environments
-.venv/
+# NOTE: the backend now lives inside .venv/ alongside the environment.
+# Ignore the environment internals (Lib, Scripts, ...) but keep the moved
+# backend source tracked.
+.venv/*
+!.venv/app/
+!.venv/tests/
+!.venv/data/
+!.venv/generated/
+!.venv/requirements.txt
 venv/
 env/
 
@@ -15,10 +23,10 @@ __pycache__/
 .env
 
 # Generated artifacts
-generated/charts/*
-generated/reports/*
-!generated/charts/.gitkeep
-!generated/reports/.gitkeep
+.venv/generated/charts/*
+.venv/generated/reports/*
+!.venv/generated/charts/.gitkeep
+!.venv/generated/reports/.gitkeep
 
 # Frontend
 frontend/node_modules/

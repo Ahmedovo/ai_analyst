@@ -17,12 +17,13 @@ charts, validation), and answers — with every number in the final answer
 
 ```powershell
 cd ai-data-analyst
+# the backend source (app/, tests/, data/, requirements.txt) lives inside .venv/
 py -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r .venv\requirements.txt
 ```
 
-Configure any provider in `.env`:
+Configure any provider in `.venv\.env`:
 
 ```
 LLM_PROVIDER=openai            # openai | openai_compatible | anthropic | google
@@ -45,21 +46,24 @@ llm.complete("Summarize this dataset")
 **CLI:**
 
 ```powershell
-python -m app.main
+# run from inside .venv/ so the `app` package is importable
+cd .venv
+Scripts\python.exe -m app.main
 ```
 
 **API server:**
 
 ```powershell
-uvicorn app.api.main:app --reload      # or: python -m app.api
+# from the project root: `--app-dir .venv` puts the backend on the import path
+.venv\Scripts\python.exe -m uvicorn app.api.main:app --reload --app-dir .venv
 # interactive docs → http://127.0.0.1:8000/docs
 ```
 
 **Web UI (frontend/):**
 
 ```powershell
-# terminal 1 — backend
-uvicorn app.api.main:app --port 8000
+# terminal 1 — backend (from the project root)
+.venv\Scripts\python.exe -m uvicorn app.api.main:app --port 8000 --app-dir .venv
 
 # terminal 2 — frontend (proxies /api → :8000)
 cd frontend
@@ -90,7 +94,7 @@ print(agent.graph.get_graph().draw_mermaid())   # render the graph
 ## API (FastAPI)
 
 ```powershell
-uvicorn app.api.main:app --reload      # or: python -m app.api
+.venv\Scripts\python.exe -m uvicorn app.api.main:app --reload --app-dir .venv
 # Swagger UI → http://127.0.0.1:8000/docs   ·   ReDoc → /redoc
 ```
 
@@ -345,51 +349,59 @@ cannot skip** — it runs on the graph path to `END`.
 
 ```
 ai-data-analyst/
-├── app/
-│   ├── main.py                  # CLI entry point: run one analysis
+├── .venv/                       # Python environment — the backend lives here
 │   │
-│   ├── api/
-│   │   ├── main.py              # FastAPI app factory: /api/analyze, /api/datasets,
-│   │   │                        #   /api/charts, /api/health, /api/tools + CORS
-│   │   └── __main__.py          # `python -m app.api` → uvicorn on :8000
+│   ├── app/
+│   │   ├── main.py              # CLI entry point: run one analysis
+│   │   │
+│   │   ├── api/
+│   │   │   ├── main.py          # FastAPI app factory: /api/analyze, /api/datasets,
+│   │   │   │                    #   /api/charts, /api/health, /api/tools + CORS
+│   │   │   └── __main__.py      # `python -m app.api` → uvicorn on :8000
+│   │   │
+│   │   ├── agents/
+│   │   │   ├── analyst.py       # LangGraph StateGraph: agent / tools / validate nodes,
+│   │   │   │                    #   system prompt, AnalystState, AnalystAgent.analyze()
+│   │   │   └── grounding.py     # answer validation: numbers must exist in tool results
+│   │   │
+│   │   ├── tools/
+│   │   │   ├── registry.py      # 7 tool JSON Schemas + run_tool() dispatcher
+│   │   │   ├── profiler.py      # profile_dataset — shape, dtypes, nulls, samples
+│   │   │   ├── pandas_tool.py   # execute_sql helper + group_by
+│   │   │   ├── sql_tool.py      # execute_sql — DuckDB (SQLite fallback), {table}
+│   │   │   ├── statistics.py    # calculate_statistics, detect_anomalies (IQR/z-score)
+│   │   │   ├── validation.py    # validate_data — rule engine (7 check types)
+│   │   │   └── visualization.py # create_chart — bar/line/histogram/scatter → PNG
+│   │   │
+│   │   ├── services/
+│   │   │   └── llm.py           # provider-agnostic LLM client: LLMConfig, ChatResponse,
+│   │   │                        #   ToolCall, native tool calling over httpx
+│   │   │
+│   │   └── schemas/
+│   │       ├── analysis.py      # AnalysisResult (pydantic): answer, steps, validation
+│   │       └── api.py           # AnalyzeRequest, HealthInfo, DatasetInfo, ...
 │   │
-│   ├── agents/
-│   │   ├── analyst.py           # LangGraph StateGraph: agent / tools / validate nodes,
-│   │   │                        #   system prompt, AnalystState, AnalystAgent.analyze()
-│   │   └── grounding.py         # answer validation: numbers must exist in tool results
+│   ├── data/
+│   │   └── sales.csv            # sample dataset (20 rows)
 │   │
-│   ├── tools/
-│   │   ├── registry.py          # 7 tool JSON Schemas + run_tool() dispatcher
-│   │   ├── profiler.py          # profile_dataset — shape, dtypes, nulls, samples
-│   │   ├── pandas_tool.py       # execute_sql helper + group_by
-│   │   ├── sql_tool.py          # execute_sql — DuckDB (SQLite fallback), {table}
-│   │   ├── statistics.py        # calculate_statistics, detect_anomalies (IQR/z-score)
-│   │   ├── validation.py        # validate_data — rule engine (7 check types)
-│   │   └── visualization.py     # create_chart — bar/line/histogram/scatter → PNG
+│   ├── generated/
+│   │   ├── charts/              # PNGs written by create_chart
+│   │   └── reports/             # future: written reports
 │   │
-│   ├── services/
-│   │   └── llm.py               # provider-agnostic LLM client: LLMConfig, ChatResponse,
-│   │                            #   ToolCall, native tool calling over httpx
+│   ├── tests/                   # 81 tests — no API key required
+│   │   ├── test_agent.py        # loop behavior via scripted fake LLM
+│   │   ├── test_langgraph_agent.py  # graph topology, state schema, validation retries
+│   │   ├── test_llm_service.py  # config + request/response basics
+│   │   ├── test_llm_tools.py    # tool wire format for all 4 provider modes
+│   │   ├── test_registry.py     # every tool executes correctly on sales.csv
+│   │   ├── test_analysis.py     # profile_dataframe / describe_statistics helpers
+│   │   ├── test_validation.py   # validate_data rules + grounding checks
+│   │   ├── test_resilience.py   # LLM retries + always-answer evidence-digest fallback
+│   │   └── test_api.py          # FastAPI endpoints + NDJSON stream via fake agent
 │   │
-│   └── schemas/
-│       ├── analysis.py          # AnalysisResult (pydantic): answer, steps, validation
-│       └── api.py               # AnalyzeRequest, HealthInfo, DatasetInfo, ...
-│
-├── data/
-│   └── sales.csv                # sample dataset (20 rows)
-│
-├── generated/
-│   ├── charts/                  # PNGs written by create_chart
-│   └── reports/                 # future: written reports
-│
-├── tests/                       # 62 tests — no API key required
-│   ├── test_agent.py            # loop behavior via scripted fake LLM
-│   ├── test_langgraph_agent.py  # graph topology, state schema, validation retries
-│   ├── test_llm_service.py      # config + request/response basics
-│   ├── test_llm_tools.py        # tool wire format for all 4 provider modes
-│   ├── test_registry.py         # every tool executes correctly on sales.csv
-│   ├── test_validation.py       # validate_data rules + grounding checks
-│   └── test_api.py              # FastAPI endpoints + NDJSON stream via fake agent
+│   ├── .env                     # LLM_PROVIDER / LLM_API_KEY / LLM_MODEL / LLM_BASE_URL
+│   └── requirements.txt         # pandas, scipy, duckdb, matplotlib, httpx, langgraph,
+│                                #   fastapi, uvicorn, python-multipart, pytest
 │
 ├── frontend/                    # React 19 + Vite 6 + Tailwind v4 + shadcn-style UI
 │   ├── src/
@@ -407,10 +419,7 @@ ai-data-analyst/
 │   │   └── index.css            # shadcn theme tokens (slate + blue accent)
 │   └── README.md                # UI architecture + streaming protocol
 │
-├── .env                         # LLM_PROVIDER / LLM_API_KEY / LLM_MODEL / LLM_BASE_URL
-├── .gitignore                   # venv, caches, secrets, generated output, node_modules
-├── requirements.txt             # pandas, scipy, duckdb, matplotlib, httpx, langgraph,
-│                                #   fastapi, uvicorn, python-multipart, pytest
+├── .gitignore                   # venv internals, caches, secrets, generated output
 └── README.md
 ```
 
@@ -442,7 +451,8 @@ Check types for `validate_data`: `not_null`, `unique`, `numeric`, `range`,
 ## Tests
 
 ```powershell
-pytest          # 81 tests, offline (fake LLM + injected fake agent, no API key)
+# from the project root (pytest picks up the tests package inside .venv/)
+.venv\Scripts\python.exe -m pytest .venv\tests -q   # 81 tests, offline (no API key)
 ```
 
 ## Extending

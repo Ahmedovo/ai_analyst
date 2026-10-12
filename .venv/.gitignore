@@ -1,0 +1,38 @@
+# Created by venv; see https://docs.python.org/3/library/venv.html
+#
+# NOTE: in this project layout the backend source lives inside .venv/.
+# Ignore the environment internals (Lib/, Scripts/, share/, pyvenv.cfg, ...)
+# but keep the moved backend source tracked (see also the root .gitignore).
+*
+!.gitignore
+
+# backend source
+!app/
+!app/**
+!tests/
+!tests/**
+!data/
+!data/**
+!requirements.txt
+
+# generated/ — track only the .gitkeep placeholders, never the chart PNGs
+!generated/
+!generated/charts/
+!generated/charts/.gitkeep
+!generated/reports/
+!generated/reports/.gitkeep
+generated/charts/*
+generated/reports/*
+!generated/charts/.gitkeep
+!generated/reports/.gitkeep
+
+# never track bytecode / caches (the !app/** / !tests/** rules above would
+# otherwise re-include them)
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# secrets stay out
+.env
