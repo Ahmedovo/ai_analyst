@@ -8,7 +8,7 @@ charts, validation), and answers — with every number in the final answer
 
 - **7 tools** — profiling, SQL, grouping, statistics, anomalies, charts, data validation
 - **LangGraph `StateGraph`** — plan → tools → observe → answer → ground-check
-- **Any LLM provider** — OpenAI, Anthropic, Gemini, or any OpenAI-compatible endpoint (raw HTTP, no vendor SDK)
+- **Any LLM provider** — OpenAI, Anthropic, Gemini, or any OpenAI-compatible endpoint (raw HTTP, no vendor SDK), with automatic fallback to backup providers if one runs out of quota
 - **FastAPI backend** — analyze, datasets, charts, health/tools endpoints
 
 ---
@@ -32,12 +32,28 @@ LLM_MODEL=gpt-4o-mini
 # LLM_BASE_URL=http://localhost:11434/v1   # for openai_compatible endpoints
 ```
 
+Add one or more **fallback providers** — used automatically when the primary
+fails (exhausted free daily quota, outage, bad key), so a run keeps going
+instead of stopping early:
+
+```
+LLM_FALLBACK_PROVIDER=openai_compatible
+LLM_FALLBACK_API_KEY=gsk_...
+LLM_FALLBACK_MODEL=llama-3.3-70b-versatile
+LLM_FALLBACK_BASE_URL=https://api.groq.com/openai/v1
+# chain more: LLM_FALLBACK_2_*, LLM_FALLBACK_3_*, ...
+```
+
 Or in code:
 
 ```python
-from app.services.llm import LLMService
+from app.services.llm import LLMConfig, LLMService
 
-llm = LLMService(api_key="sk-...", model_name="claude-sonnet-4-5", provider="anthropic")
+primary = LLMConfig(provider="openai_compatible", api_key="sk-or-...",
+                    model="qwen/qwen3-32b:free", base_url="https://openrouter.ai/api/v1")
+backup = LLMConfig(provider="anthropic", api_key="sk-ant-...", model="claude-sonnet-4-5")
+
+llm = LLMService(config=primary, fallbacks=[backup])
 llm.complete("Summarize this dataset")
 ```
 
@@ -103,7 +119,7 @@ print(agent.graph.get_graph().draw_mermaid())   # render the graph
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/` | service info + endpoint list |
-| `GET` | `/api/health` | status, provider, model, `llm_available` (never the key) |
+| `GET` | `/api/health` | status, provider, model, `llm_available`, `llm_fallbacks` (never the key) |
 | `GET` | `/api/tools` | the 7 tool schemas (same ones sent to the LLM) |
 | `GET` | `/api/datasets` | CSVs available in `data/` (name + size) |
 | `POST` | `/api/datasets` | upload a CSV (multipart, `.csv` only) → `{name, size}` |
@@ -325,6 +341,10 @@ results become `tool_result` blocks, Gemini's become `functionResponse`, ...).
   backoff (`LLMService.chat`, `config.max_retries = 2`), so a momentary
   provider hiccup does not kill a run. 4xx auth errors are never retried.
   Provider errors surface as short single-line messages, never raw JSON dumps.
+- **Fallback providers.** If the primary still fails — an exhausted free daily
+  quota, an outage, a bad key — each configured fallback is tried in turn
+  (`LLM_FALLBACK_*`), so the run continues on another provider. The provider
+  that actually answered is recorded on each `ChatResponse`.
 - **A run can never end without an answer.** If the model is unreachable
   mid-run (outage, exhausted free-tier quota), the agent converts the tool
   results gathered so far into a deterministic **evidence digest** and ships
@@ -366,8 +386,9 @@ ai-data-analyst/
 │   │   │
 │   │   ├── tools/
 │   │   │   ├── registry.py      # 7 tool JSON Schemas + run_tool() dispatcher
+│   │   │   ├── reader.py        # read_csv — encoding-tolerant CSV loading (UTF-8/Win-1252)
 │   │   │   ├── profiler.py      # profile_dataset — shape, dtypes, nulls, samples
-│   │   │   ├── pandas_tool.py   # execute_sql helper + group_by
+│   │   │   ├── pandas_tool.py   # run_pandas_code + group_by
 │   │   │   ├── sql_tool.py      # execute_sql — DuckDB (SQLite fallback), {table}
 │   │   │   ├── statistics.py    # calculate_statistics, detect_anomalies (IQR/z-score)
 │   │   │   ├── validation.py    # validate_data — rule engine (7 check types)
@@ -388,7 +409,7 @@ ai-data-analyst/
 │   │   ├── charts/              # PNGs written by create_chart
 │   │   └── reports/             # future: written reports
 │   │
-│   ├── tests/                   # 81 tests — no API key required
+│   ├── tests/                   # 98 tests — no API key required
 │   │   ├── test_agent.py        # loop behavior via scripted fake LLM
 │   │   ├── test_langgraph_agent.py  # graph topology, state schema, validation retries
 │   │   ├── test_llm_service.py  # config + request/response basics
@@ -397,9 +418,12 @@ ai-data-analyst/
 │   │   ├── test_analysis.py     # profile_dataframe / describe_statistics helpers
 │   │   ├── test_validation.py   # validate_data rules + grounding checks
 │   │   ├── test_resilience.py   # LLM retries + always-answer evidence-digest fallback
+│   │   ├── test_llm_fallback.py # provider fallback chain when the primary fails
+│   │   ├── test_reader.py       # encoding-tolerant CSV loading (UTF-8 / Windows-1252)
 │   │   └── test_api.py          # FastAPI endpoints + NDJSON stream via fake agent
 │   │
 │   ├── .env                     # LLM_PROVIDER / LLM_API_KEY / LLM_MODEL / LLM_BASE_URL
+│   │                            #   + optional LLM_FALLBACK_* providers
 │   └── requirements.txt         # pandas, scipy, duckdb, matplotlib, httpx, langgraph,
 │                                #   fastapi, uvicorn, python-multipart, pytest
 │
@@ -443,6 +467,7 @@ Check types for `validate_data`: `not_null`, `unique`, `numeric`, `range`,
 ## Guarantees
 
 - **No invented numbers** — deterministic grounding gate on every final answer
+- **Reads real-world files** — every tool loads CSV through one encoding-tolerant reader (UTF-8, UTF-8/16 with BOM, Windows-1252, Latin-1), so Excel/ANSI exports work instead of failing on a single non-UTF-8 byte
 - **Follow-ups keep context** — `history: [{question, answer, tool_results}]` replays earlier turns to the model, and their tool results join the grounding corpus so reused numbers stay valid
 - **No silent tool failures** — exceptions come back as `ERROR: ...` so the model retries with corrected arguments
 - **No runaway loops** — `max_turns` on model calls, `MAX_ANSWER_RETRIES = 1` on validation, `recursion_limit` derived from both
@@ -452,7 +477,7 @@ Check types for `validate_data`: `not_null`, `unique`, `numeric`, `range`,
 
 ```powershell
 # from the project root (pytest picks up the tests package inside .venv/)
-.venv\Scripts\python.exe -m pytest .venv\tests -q   # 81 tests, offline (no API key)
+.venv\Scripts\python.exe -m pytest .venv\tests -q   # 98 tests, offline (no API key)
 ```
 
 ## Extending

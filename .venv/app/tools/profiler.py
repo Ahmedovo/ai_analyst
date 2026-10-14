@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pandas as pd
+from app.tools.reader import read_csv
 
 
 def profile_dataframe(path: str | Path) -> dict:
-    df = pd.read_csv(path)
+    df = read_csv(path)
     return {
         "rows": int(df.shape[0]),
         "columns": int(df.shape[1]),

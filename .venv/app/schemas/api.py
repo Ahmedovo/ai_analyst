@@ -50,6 +50,10 @@ class HealthInfo(BaseModel):
     llm_available: bool = Field(
         description="True when an API key is configured (key itself is never exposed)"
     )
+    llm_fallbacks: list[str] = Field(
+        default_factory=list,
+        description="Fallback providers, tried in order when the primary fails",
+    )
 
 
 class DatasetInfo(BaseModel):

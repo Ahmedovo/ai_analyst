@@ -11,6 +11,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
 
+from app.tools.reader import read_csv  # noqa: E402
+
 #: absolute so the agent and the API serve the same directory regardless of cwd
 CHARTS_DIR = Path(__file__).resolve().parents[2] / "generated" / "charts"
 CHART_TYPES = ("bar", "line", "histogram", "scatter")
@@ -33,7 +35,7 @@ def create_chart(
     if chart_type not in CHART_TYPES:
         raise ValueError(f"chart_type must be one of {CHART_TYPES}, got '{chart_type}'")
 
-    df = pd.read_csv(path)
+    df = read_csv(path)
     needs_xy = chart_type in ("bar", "line", "scatter")
     if needs_xy and not (x and y):
         raise ValueError(f"chart_type '{chart_type}' requires both x and y columns")

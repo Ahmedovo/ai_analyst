@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pandas as pd
 
+from app.tools.reader import read_csv
+
 
 def describe_statistics(path: str | Path) -> dict:
-    df = pd.read_csv(path)
+    df = read_csv(path)
     numeric = df.select_dtypes(include="number")
     return {
         "describe": numeric.describe().to_dict(),
@@ -20,7 +22,7 @@ def calculate_statistics(
     path: str | Path, columns: list[str] | None = None
 ) -> dict:
     """Descriptive statistics for selected (or all) numeric columns."""
-    df = pd.read_csv(path)
+    df = read_csv(path)
     numeric = df.select_dtypes(include="number")
     if columns:
         missing = [c for c in columns if c not in numeric.columns]
@@ -37,7 +39,7 @@ def calculate_statistics(
 
 
 def correlation_between(path: str | Path, col_a: str, col_b: str) -> float:
-    df = pd.read_csv(path)
+    df = read_csv(path)
     return float(df[col_a].corr(df[col_b]))
 
 
@@ -53,7 +55,7 @@ def detect_anomalies(
     Returns the method, effective bounds, anomaly count, and the offending
     rows (capped at ``max_rows``).
     """
-    df = pd.read_csv(path)
+    df = read_csv(path)
     if column not in df.columns:
         raise ValueError(f"Column '{column}' not found. Columns: {list(df.columns)}")
     series = pd.to_numeric(df[column], errors="coerce")

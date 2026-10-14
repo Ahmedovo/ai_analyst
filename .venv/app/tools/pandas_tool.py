@@ -6,10 +6,12 @@ from pathlib import Path
 
 import pandas as pd
 
+from app.tools.reader import read_csv
+
 
 def run_pandas_code(path: str | Path, code: str) -> str:
     """Execute pandas code with `df` bound to the dataset and return repr output."""
-    df = pd.read_csv(path)
+    df = read_csv(path)
     namespace: dict = {"df": df, "pd": pd}
     result = eval(code, namespace)  # noqa: S307 - intended for local analyst use
     if isinstance(result, pd.DataFrame):
@@ -29,7 +31,7 @@ def group_by(
     """Group rows by ``by`` and aggregate ``values`` with ``agg``."""
     if agg not in AGGREGATIONS:
         raise ValueError(f"agg must be one of {sorted(AGGREGATIONS)}, got '{agg}'")
-    df = pd.read_csv(path)
+    df = read_csv(path)
     by = [by] if isinstance(by, str) else list(by)
     values = [values] if isinstance(values, str) else list(values)
 

@@ -23,6 +23,7 @@ Configure with constructor args (``api_key``, ``model_name``, ...) or env vars:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 import uuid
@@ -36,6 +37,8 @@ from dotenv import load_dotenv
 # The backend lives inside .venv/ in this project layout, so load .env from
 # next to the package rather than from the current working directory.
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 60.0
 
@@ -76,6 +79,42 @@ class LLMConfig:
         values.update({k: v for k, v in overrides.items() if v is not None})
         return cls(**values)
 
+    @classmethod
+    def fallback_configs_from_env(cls) -> list["LLMConfig"]:
+        """Extra providers to try, in order, when the primary one fails.
+
+        Read from ``LLM_FALLBACK_*`` for the first fallback, then
+        ``LLM_FALLBACK_2_*``, ``LLM_FALLBACK_3_*``, ... for more. An entry is
+        created only when its ``API_KEY`` is set, e.g. to keep working after
+        OpenRouter's free daily quota runs out::
+
+            LLM_FALLBACK_PROVIDER=openai_compatible
+            LLM_FALLBACK_API_KEY=gsk_...
+            LLM_FALLBACK_MODEL=llama-3.3-70b-versatile
+            LLM_FALLBACK_BASE_URL=https://api.groq.com/openai/v1
+        """
+        configs: list[LLMConfig] = []
+        prefixes = ["LLM_FALLBACK_"] + [f"LLM_FALLBACK_{i}_" for i in range(2, 11)]
+        for prefix in prefixes:
+            api_key = os.getenv(f"{prefix}API_KEY")
+            if not api_key:
+                continue
+            configs.append(
+                cls(
+                    provider=os.getenv(f"{prefix}PROVIDER") or "openai",
+                    model=os.getenv(f"{prefix}MODEL") or "gpt-4o-mini",
+                    api_key=api_key,
+                    base_url=os.getenv(f"{prefix}BASE_URL"),
+                    temperature=float(os.getenv("LLM_TEMPERATURE", "0.2")),
+                    max_tokens=int(os.getenv("LLM_MAX_TOKENS", "2048")),
+                    timeout=float(
+                        os.getenv(f"{prefix}TIMEOUT")
+                        or os.getenv("LLM_TIMEOUT", str(DEFAULT_TIMEOUT))
+                    ),
+                )
+            )
+        return configs
+
 
 @dataclass
 class ToolCall:
@@ -92,6 +131,10 @@ class ChatResponse:
 
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
+    #: Which provider/model actually served this turn (set on success).
+    #: Useful to tell whether a fallback answered instead of the primary.
+    provider: str = ""
+    model: str = ""
 
     @property
     def has_tool_calls(self) -> bool:
@@ -480,14 +523,34 @@ class LLMService:
         provider: str | None = None,
         base_url: str | None = None,
         config: LLMConfig | None = None,
+        fallbacks: list[LLMConfig] | None = None,
     ) -> None:
-        self.config = config or LLMConfig.from_env(
-            api_key=api_key, model=model_name, provider=provider, base_url=base_url
-        )
+        if config is not None:
+            # Explicit config (tests / injection): no implicit env fallbacks.
+            self.config = config
+            self.fallbacks = list(fallbacks or [])
+        else:
+            self.config = LLMConfig.from_env(
+                api_key=api_key, model=model_name, provider=provider, base_url=base_url
+            )
+            self.fallbacks = (
+                list(fallbacks)
+                if fallbacks is not None
+                else LLMConfig.fallback_configs_from_env()
+            )
+
+    def _all_configs(self) -> list[LLMConfig]:
+        """Primary provider first, then every configured fallback, in order."""
+        return [self.config, *self.fallbacks]
+
+    @property
+    def providers(self) -> list[str]:
+        """All configured provider names (primary first)."""
+        return [cfg.provider for cfg in self._all_configs()]
 
     @property
     def available(self) -> bool:
-        return bool(self.config.api_key)
+        return any(cfg.api_key for cfg in self._all_configs())
 
     def complete(self, prompt: str, system: str | None = None) -> str:
         """Send a single-turn prompt and return the completion text."""
@@ -504,15 +567,45 @@ class LLMService:
     ) -> ChatResponse:
         """Send a conversation (optionally with tools) and get one model turn.
 
-        Transient failures (429/5xx/timeouts) are retried with a small backoff
-        so a momentary provider hiccup does not kill the whole agent run.
+        The primary provider is tried first, retrying transient failures
+        (429/5xx/timeouts) with a small backoff. If it still fails — an
+        exhausted daily quota, an outage, a bad key — each fallback provider is
+        tried in turn, so the run keeps going as long as one provider works.
         """
-        cfg = self.config
-        if not cfg.api_key:
+        configs = [cfg for cfg in self._all_configs() if cfg.api_key]
+        if not configs:
             return ChatResponse(
-                text=f"[LLM not configured: set LLM_API_KEY for provider '{cfg.provider}']"
+                text=(
+                    "[LLM not configured: set LLM_API_KEY for provider "
+                    f"'{self.config.provider}']"
+                )
             )
+        if len(configs) == 1:
+            return self._chat_with(configs[0], messages, tools)
 
+        errors: list[str] = []
+        for index, cfg in enumerate(configs):
+            try:
+                return self._chat_with(cfg, messages, tools)
+            except Exception as exc:  # noqa: BLE001 — fall back to the next provider
+                errors.append(f"{cfg.provider}/{cfg.model}: {exc}")
+                if index + 1 < len(configs):
+                    logger.warning(
+                        "LLM provider '%s' (%s) failed — falling back to '%s': %s",
+                        cfg.provider,
+                        cfg.model,
+                        configs[index + 1].provider,
+                        exc,
+                    )
+        raise RuntimeError("All LLM providers failed — " + " | ".join(errors))
+
+    def _chat_with(
+        self,
+        cfg: LLMConfig,
+        messages: list[dict[str, Any]],
+        tools: list[ToolDefinition] | None,
+    ) -> ChatResponse:
+        """One provider turn, retrying transient failures with a small backoff."""
         url, headers, payload = _build_request(cfg, messages, tools)
         last_message = "LLM request failed"
         last_exc: Exception | None = None
@@ -531,6 +624,8 @@ class LLMService:
                     return ChatResponse(
                         text=_parse_response(cfg.provider, data),
                         tool_calls=_parse_tool_calls(cfg.provider, data),
+                        provider=cfg.provider,
+                        model=cfg.model,
                     )
                 last_message = _clean_error(response.status_code, response.text)
                 if response.status_code not in TRANSIENT_STATUSES:

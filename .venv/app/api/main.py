@@ -86,11 +86,13 @@ def create_app(agent: AnalystAgent | None = None) -> FastAPI:
     async def health() -> HealthInfo:
         llm = application.state.agent.llm
         config = getattr(llm, "config", None)  # injected test doubles may differ
+        fallbacks = getattr(llm, "fallbacks", []) or []
         return HealthInfo(
             status="ok",
             provider=getattr(config, "provider", "unknown"),
             model=getattr(config, "model", "unknown"),
             llm_available=bool(getattr(llm, "available", False)),
+            llm_fallbacks=[getattr(cfg, "provider", "unknown") for cfg in fallbacks],
         )
 
     @application.get("/api/tools", tags=["meta"])

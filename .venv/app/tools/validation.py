@@ -20,6 +20,8 @@ from typing import Any
 
 import pandas as pd
 
+from app.tools.reader import read_csv
+
 SAMPLE_LIMIT = 5
 
 VALID_CHECKS = (
@@ -100,7 +102,7 @@ def _evaluate(df: pd.DataFrame, rule: dict[str, Any]) -> dict[str, Any]:
 
 def validate_data(path: str | Path, rules: list[dict[str, Any]] | None = None) -> dict:
     """Evaluate quality rules against a CSV and return a pass/fail report."""
-    df = pd.read_csv(path)
+    df = read_csv(path)
     if rules is None:
         rules = [{"check": "not_null", "column": c} for c in df.columns]
         rules.append({"check": "no_duplicates"})
